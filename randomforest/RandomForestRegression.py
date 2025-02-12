@@ -23,11 +23,146 @@ from scipy.stats import gaussian_kde
 from sklearn import preprocessing
 from sklearn.model_selection import GridSearchCV
 
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 # import mpl_scatter_density # adds projection='scatter_density'
 from sklearn.model_selection import RandomizedSearchCV
 
-def RandomForestInit(features, N_train, N_test, name):
+def RandomForestDataSplit(features):
+
+    #save feature names 
+    feature_list = list(features.columns)
+    dependent_name = feature_list[0]
+    feature_list=feature_list[1:len(feature_list)]
+    
+    #convert to array 
+    features=np.array(features)
+    print(len(features))
+    print(len(features)*0.5)
+
+    #Remove missing from each row 
+    features=features[~np.isnan(features).any(axis=1)]
+    
+    #Get predictors and dependent var
+    y=features[:,0]
+    X=features[:,1:len(features)]
+
+    # Split the data into training and test sets (80% training, 20% test)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Further split the training set into training and validation sets (80% training, 20% validation)
+    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+
+
+    #Coordinates of Prediction  
+    idlon=feature_list.index('X')
+    idlat=feature_list.index('Y')
+   
+    ypredlon=X_test[:,idlon]
+    ypredlat=X_test[:,idlat]
+
+
+  
+
+    return X_train, X_test, X_val, y_train, y_test, y_val
+
+
+def RandomForestTrain(features, X_train, X_test, X_val, y_train, y_test, y_val):
+
+    # Train the Random Forest model
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    # Evaluate the model on the validation set
+    y_val_pred = model.predict(X_val)
+
+    
+    #MSE
+    mse=mean_squared_error(y_val_pred, y_val)
+    
+    #Get Random Forest R2 for test set
+    test_score = r2_score(y_val_pred, y_val)
+    
+    print(f'Val Set R-2 score: {test_score:>5.3}')
+    print(f'Val Set MSE: {mse:>5.3}')
+
+    return model
+
+
+def RandomForestValTune(X_val, y_val, model):
+
+
+    # Define the parameter grid
+    param_grid = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [None, 10, 20, 30],
+        'min_samples_split': [2, 5, 10],
+        'min_samples_leaf': [1, 2, 4],
+        'max_features': ['auto', 'sqrt', 'log2'],
+        'bootstrap': [True, False]
+    }
+
+    # Initialize GridSearchCV
+    grid_search = GridSearchCV(estimator = model, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2)
+
+    # Fit the model
+    grid_search.fit(X_val, y_val)
+
+    # Get the best parameters
+    best_params = grid_search.best_params_
+
+    print(f'Best parameters: {best_params}')
+    
+    return best_params
+
+
+
+def RandomForestBestModel(X_train, X_test, X_val, y_train, y_test, y_val, best_params):
+    """ Combine train and validation data with 
+    best params, and then test on test set"""
+    
+    print('combine datas val and train')
+    X_train_combined = np.concatenate((X_train, X_val), axis=0) 
+    y_train_combined = np.concatenate((y_train, y_val), axis=0)
+
+    #Re - Train the Random Forest model
+    print('running model with best params...')
+    best_model = RandomForestRegressor( n_estimators=best_params['n_estimators'], 
+                               max_depth=best_params['max_depth'], 
+                               min_samples_split=best_params['min_samples_split'], 
+                               min_samples_leaf=best_params['min_samples_leaf'], 
+                               max_features=best_params['max_features'], 
+                               bootstrap=best_params['bootstrap'], 
+                               random_state=42, 
+                               oob_score=True )
+    
+    best_model.fit(X_train_combined, y_train_combined)
+
+    #Test on Test Data
+
+    y_test_pred = best_model.predict(X_test) 
+    
+    #MSE
+    mse=mean_squared_error(y_test_pred, y_test)
+    
+    #Get Random Forest R2 for test set
+    test_score = r2_score(y_test_pred, y_test)
+    
+    print(f'Val Set R-2 score: {test_score:>5.3}')
+    print(f'Val Set MSE: {mse:>5.3}')
+    
+
+    return y_test_pred, X_test
+
+
+
+
+###### - OLDEr
+
+def RandomForestTune(features, N_train, N_validation, N_test, name):
     
     #save feature names 
     feature_list = list(features.columns)
@@ -47,8 +182,9 @@ def RandomForestInit(features, N_train, N_test, name):
     X=features[:,1:len(features)]
     
     #Split into test and training set - random selection #Test size is proportion saved for test 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = N_test, train_size = N_train)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = N_test, train_size = N_train, random_state = 42)
     
+
     # Define the parameter grid
     param_grid = {
         'n_estimators': [50, 100, 200],
@@ -74,6 +210,10 @@ def RandomForestInit(features, N_train, N_test, name):
     print(f'Best parameters: {best_params}')
     
     return best_params
+
+
+
+
 
 def RandomForestRegression(features, N_train, N_test, name, best_params):
     """ Create random forest regression model
